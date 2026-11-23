@@ -1,0 +1,6 @@
+{
+  "appId": "de.foxtank.app",
+  "appName": "Fox Tank",
+  "webDir": "www",
+  "android": { "backgroundColor": "#f7f5f2" }
+}
