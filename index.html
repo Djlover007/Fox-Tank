@@ -232,6 +232,14 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .res button{border:0;text-align:left;background:var(--surface);border-radius:14px;padding:12px 14px;font-size:15px}
 .res button small{display:block;color:var(--muted);font-size:12.5px}
 .sheet.open~.toast{bottom:auto;top:calc(14px + env(safe-area-inset-top,0px))}
+.avg{display:flex;align-items:center;gap:10px;background:var(--surface);border-radius:16px;padding:10px 14px;box-shadow:0 1px 0 var(--line);font-size:14px}
+.avg .tx{flex:1;min-width:0}
+.avg .tx small{display:block;color:var(--muted);font-size:12px}
+.avg .v{font:800 22px/1 var(--font-display);letter-spacing:-.01em}
+.avg .v sup{font-size:.55em;vertical-align:.7em}
+.avg .d{font-size:12.5px;font-weight:700;border-radius:999px;padding:3px 8px;white-space:nowrap}
+.avg .d.lo{background:var(--good-soft);color:var(--good)}
+.avg .d.hi{background:var(--bad-soft);color:var(--bad)}
 .fab{position:sticky;bottom:6px;align-self:center;box-shadow:0 8px 22px var(--shadow)}
 </style>
 </head>
@@ -343,6 +351,31 @@ async function api(path,params){
   return j;
 }
 
+/* ================= Deutschland-Durchschnitt (benzinpreis-aktuell.de, ohne Schlüssel) ================= */
+var avg=load('ft-avg',null),avgBusy=false;
+async function loadAvg(){
+  if(avgBusy||(avg&&Date.now()-avg.at<10*60000))return;
+  avgBusy=true;
+  try{
+    var j=JSON.parse(await getText('https://www.benzinpreis-aktuell.de/api.v2.php?data=nationwide'));
+    var a={at:Date.now(),date:String(j.date||''),e5:parseFloat(j.super),e10:parseFloat(j.e10),diesel:parseFloat(j.diesel)};
+    if(n(a.e5)||n(a.e10)||n(a.diesel)){avg=a;save('ft-avg',avg);if(tab==='near'||tab==='fav'||tab==='alarm')render();}
+  }catch(e){}
+  avgBusy=false;
+}
+function avgStand(){
+  var m=String(avg.date).match(/(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d)/);if(!m)return '';
+  var d=new Date(+m[1],+m[2]-1,+m[3],+m[4],+m[5]),today=new Date();
+  return 'Stand '+(d.toDateString()===today.toDateString()?'heute':d.toLocaleDateString('de-DE'))+', '+m[4]+':'+m[5]+' Uhr';
+}
+/* cmp: Preis zum Vergleichen (z. B. günstigster in der Nähe) */
+function avgBox(cmp){
+  if(!avg||!n(avg[set.fuel]))return '';
+  var a=avg[set.fuel],d='';
+  if(n(cmp)){var c=Math.round((cmp-a)*100);d=c<0?'<span class="d lo">'+(-c)+' Cent günstiger</span>':c>0?'<span class="d hi">'+c+' Cent teurer</span>':'<span class="d">wie Schnitt</span>';}
+  return '<div class="avg"><div class="tx"><small>Ø Deutschland · '+FUEL[set.fuel]+'</small><span class="v">'+pr(a)+'</span></div>'+(d?'<div style="text-align:right"><small style="display:block;color:var(--muted);font-size:12px;margin-bottom:3px">'+(isDemo()?'Beispiel':'Günstigste hier')+'</small>'+d+'</div>':'<small style="color:var(--muted);font-size:12px;text-align:right">'+esc(avgStand())+'<br>benzinpreis-aktuell.de</small>')+'</div>';
+}
+
 /* ================= Standort ================= */
 function geoBrowser(){return new Promise(function(ok,no){
   if(!navigator.geolocation){no(new Error('kein GPS'));return;}
@@ -411,7 +444,7 @@ function stRow(s,r){
     '<button class="ib star'+(isFav(s.id)?' on':'')+'" data-act="fav" data-id="'+esc(s.id)+'" aria-label="Favorit">'+ic('star')+'</button></div>';
 }
 function demoBox(){
-  return isDemo()?'<div class="demo"><div><b>Beispieldaten.</b> Für echte Preise brauchst du einen kostenlosen Schlüssel von Tankerkönig.</div><button class="btn sm pri" data-act="keyhelp">Einrichten</button></div>':'';
+  return isDemo()?'<div class="demo"><div><b>Tankstellen = Beispieldaten.</b> Der Deutschland-Schnitt ist echt. Für echte Preise in deiner Nähe brauchst du einen kostenlosen Schlüssel von Tankerkönig.</div><button class="btn sm pri" data-act="keyhelp">Einrichten</button></div>':'';
 }
 function chip(act,k,txt,on){return '<button class="chip" data-act="'+act+'" data-k="'+k+'" aria-pressed="'+on+'">'+txt+'</button>';}
 function viewNear(){
@@ -424,6 +457,7 @@ function viewNear(){
     '<div class="row"><button class="ib" data-act="view" aria-label="'+(set.view==='map'?'Liste':'Karte')+'">'+ic(set.view==='map'?'list':'map')+'</button><button class="ib" data-act="refresh" aria-label="Neu laden">'+(busy?'<span class="spin"></span>':ic('refresh'))+'</button></div></div></div>';
   if(lastErr)h+='<div class="err">'+esc(lastErr)+'</div>';
   if(!near){
+    h+=avgBox(null);
     h+=busy?'<div class="empty"><span class="spin"></span>Preise werden geladen …</div>':
       '<div class="empty"><svg viewBox="0 0 112 108"><use href="#fox"/></svg><b>Wo willst du tanken?</b><div class="row" style="justify-content:center"><button class="btn pri" data-act="locate">'+ic('loc')+'Mein Standort</button><button class="btn" data-act="placesearch">'+ic('search')+'Ort suchen</button></div></div>';
     return h;
@@ -431,10 +465,11 @@ function viewNear(){
   var l=sorted(),r=range(l),f=set.fuel;
   var cheap=l.filter(function(s){return s.isOpen&&n(s[f]);}).sort(function(a,b){return a[f]-b[f]||a.dist-b.dist;})[0];
   if(cheap)h+='<div class="best" data-act="station" data-id="'+esc(cheap.id)+'"><div class="bp">'+pr(cheap[f])+'</div><div class="tx"><span class="kl">Am günstigsten</span><b>'+esc(title(cheap))+'</b><small>'+esc(addr(cheap))+' · '+km(cheap.dist)+'</small></div></div>';
+  h+=avgBox(cheap?cheap[f]:null);
   if(set.view==='map'){h+='<div id="map"></div>';}
   else if(!l.length)h+='<div class="empty">Keine Tankstelle im Umkreis von '+set.rad+' km. Nimm einen größeren Umkreis.</div>';
   else h+='<div class="sl">'+l.map(function(s){return stRow(s,r);}).join('')+'</div>';
-  h+='<p class="src">Preise: <a href="#" data-act="ext" data-u="https://www.tankerkoenig.de">Tankerkönig</a> (MTS-K), CC BY 4.0'+(set.view==='map'?' · Karte © OpenStreetMap, © CARTO':'')+'</p>';
+  h+='<p class="src">Preise: <a href="#" data-act="ext" data-u="https://www.tankerkoenig.de">Tankerkönig</a> (MTS-K), CC BY 4.0 · Ø Deutschland: <a href="#" data-act="ext" data-u="https://www.benzinpreis-aktuell.de">benzinpreis-aktuell.de</a>'+(set.view==='map'?' · Karte © OpenStreetMap, © CARTO':'')+'</p>';
   return h;
 }
 
@@ -530,6 +565,7 @@ function viewFav(){
   var h=demoBox()+'<div class="row" style="justify-content:space-between"><h2>Favoriten</h2><button class="ib" data-act="favref" aria-label="Neu laden">'+(favBusy?'<span class="spin"></span>':ic('refresh'))+'</button></div>';
   if(!favs.length)return h+'<div class="empty"><svg class="i">'+'<use href="#i-star"/></svg><b>Noch keine Favoriten</b>Tipp bei einer Tankstelle auf den Stern. Bis zu 10 Stück, ihre Preise siehst du hier auf einen Blick.<button class="btn pri" data-act="tab" data-k="near">Tankstellen suchen</button></div>';
   if(favPrices)h+='<p class="hint">Stand: '+ago(favPrices.at)+'</p>';
+  h+=avgBox(null);
   var P=favPrices&&favPrices.prices||{};
   var low={};FUELS.forEach(function(k){var m=99;favs.forEach(function(f){var p=P[f.id];if(p&&p.status==='open'&&n(p[k])&&p[k]<m)m=p[k];});low[k]=m;});
   var l=favs.slice();
@@ -568,6 +604,7 @@ function viewAlarm(){
   h+='<div class="box"><p class="lbl">Melde dich, wenn '+FUEL[set.fuel]+' höchstens kostet</p>'+
     '<div class="step"><button data-act="lim" data-k="-1" aria-label="1 Cent weniger">−</button><div class="val">'+s+'<sup>9</sup></div><button data-act="lim" data-k="1" aria-label="1 Cent mehr">+</button></div>'+
     '<div class="seg">'+FUELS.map(function(k){return '<button data-act="fuel" data-k="'+k+'" aria-pressed="'+(set.fuel===k)+'">'+FUEL[k]+'</button>';}).join('')+'</div>'+
+    (avg&&n(avg[set.fuel])?'<small class="hint">Deutschland-Durchschnitt gerade: '+eur(avg[set.fuel],3)+'</small>':'')+
     (near&&range(near.stations)?'<small class="hint">Gerade in deiner Nähe: '+eur(range(near.stations).min,3)+' bis '+eur(range(near.stations).max,3)+'</small>':'')+'</div>';
   h+='<div class="box"><p class="lbl">Wo soll ich schauen?</p>'+
     '<div class="srow line" style="padding:0;background:none"><div><b>Meine Favoriten</b><br><small>'+(favs.length?favs.length+' Tankstelle'+(favs.length>1?'n':''):'Noch keine, tipp bei Tankstellen auf den Stern')+'</small></div><input type="checkbox" class="sw" id="alFav"'+(alarm.favs?' checked':'')+' aria-label="Favoriten"></div>'+
@@ -697,6 +734,7 @@ function go(t){
   if(t==='fav')loadFavPrices(false);
   if(t==='alarm')refreshAState();
   if(t==='near'&&!near&&pos&&!busy)loadNear(false);
+  loadAvg();
 }
 document.getElementById('bnav').addEventListener('click',function(e){var b=e.target.closest('button[data-tab]');if(b)go(b.dataset.tab);});
 function render(){
@@ -752,7 +790,7 @@ async function settingsSheet(){
     '<div class="srow"><b>Spritsorte</b><div class="seg">'+FUELS.map(function(k){return '<button data-act="fuel" data-k="'+k+'" aria-pressed="'+(set.fuel===k)+'">'+FUEL[k]+'</button>';}).join('')+'</div></div>'+
     (isNative()?'<button class="srow" style="border:0;text-align:left" data-act="upd"><b>App-Update</b><small>'+(appVer?'Version '+appVer.code+' · ':'')+'Tippen zum Prüfen'+(upd?' · Neu: '+upd.ver:'')+'</small></button>'+
     '<div class="srow line"><div><b>Updates automatisch suchen</b><br><small>Die Installation bestätigst du selbst</small></div><input type="checkbox" class="sw" id="autoUpd"'+(set.autoUpd?' checked':'')+' aria-label="Updates automatisch suchen"></div>':'')+
-    '<div class="srow"><b>Woher kommen die Preise?</b><small>Alle Tankstellen in Deutschland müssen ihre Preise an die Markttransparenzstelle für Kraftstoffe (MTS-K) melden. Fox Tank holt sie über Tankerkönig (Lizenz CC BY 4.0). Die Preise können sich jederzeit ändern, an der Säule gilt der Preis dort.</small></div>'+
+    '<div class="srow"><b>Woher kommen die Preise?</b><small>Alle Tankstellen in Deutschland müssen ihre Preise an die Markttransparenzstelle für Kraftstoffe (MTS-K) melden. Fox Tank holt sie über Tankerkönig (Lizenz CC BY 4.0). Den Deutschland-Durchschnitt liefert benzinpreis-aktuell.de, dafür braucht es keinen Schlüssel. Die Preise können sich jederzeit ändern, an der Säule gilt der Preis dort.</small></div>'+
     '<div class="srow line"><div><b>Tankbuch löschen</b><br><small>'+book.length+' Einträge</small></div><button class="btn sm" data-act="clearbook">Löschen</button></div>'+
     '<p class="hint" style="text-align:center">Fox Tank · Design by <b style="color:var(--accent)">Mr.Fox</b></p>');
   var el=$('#autoUpd');if(el)el.addEventListener('change',function(e){set.autoUpd=e.target.checked;saveSet();});
@@ -857,13 +895,14 @@ document.addEventListener('click',async function(e){
   if(near&&pos&&(near.lat!==pos.lat||near.lng!==pos.lng))near=null;
 })();
 render();
+loadAvg();
 setTimeout(function(){$('#splash').classList.add('hide');},900);
 if(tab==='near'){
   if(set.place)loadNear(false);
   else{usePos(true).then(function(){if(near&&(near.lat!==pos.lat||near.lng!==pos.lng))near=null;loadNear(false);}).catch(function(e){if(!near){var m=errText(e);lastErr=/permission/i.test(m)?'Erlaube Fox Tank den Standort oder such einen Ort aus.':'';render();}});}
 }else if(tab==='fav')loadFavPrices(false);
 else if(tab==='alarm')refreshAState();
-document.addEventListener('visibilitychange',function(){if(!document.hidden&&tab==='alarm')refreshAState();});
+document.addEventListener('visibilitychange',function(){if(document.hidden)return;loadAvg();if(tab==='alarm')refreshAState();});
 if(alarm.on)syncAlarm();
 if(isNative()&&set.autoUpd){
   var lastU=0;try{lastU=Number(localStorage.getItem('ft-upd-t')||0);}catch(e){}
