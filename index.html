@@ -138,6 +138,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .where .tx small{color:var(--muted);font-size:13px}
 .seg{display:flex;background:var(--surface2);border-radius:14px;padding:4px;gap:4px}
 .seg button{flex:1;border:0;background:none;border-radius:10px;padding:9px 4px;font-weight:700;font-size:14.5px;color:var(--muted);min-height:40px}
+.seg button .i{width:18px;height:18px;vertical-align:-4px}
 .seg button[aria-pressed="true"]{background:var(--surface);color:var(--fg);box-shadow:0 1px 3px var(--shadow)}
 .best{background:var(--brand);color:#fff;border-radius:22px;padding:16px;display:flex;gap:14px;align-items:center;cursor:pointer}
 .best .bp{font:800 40px/1 var(--font-display);letter-spacing:-.02em;color:#ffb067}
@@ -454,8 +455,9 @@ function viewNear(){
     '<div class="seg">'+FUELS.map(function(k){return '<button data-act="fuel" data-k="'+k+'" aria-pressed="'+(set.fuel===k)+'">'+FUEL[k]+'</button>';}).join('')+'</div>'+
     '<div class="row" style="justify-content:space-between"><div class="chips">'+[2,5,10,25].map(function(r){return chip('rad',r,r+' km',set.rad===r);}).join('')+'</div></div>'+
     '<div class="row" style="justify-content:space-between"><div class="chips">'+chip('sort','price','Günstigste',set.sort==='price')+chip('sort','dist','Nächste',set.sort==='dist')+'</div>'+
-    '<div class="row"><button class="ib" data-act="view" aria-label="'+(set.view==='map'?'Liste':'Karte')+'">'+ic(set.view==='map'?'list':'map')+'</button><button class="ib" data-act="refresh" aria-label="Neu laden">'+(busy?'<span class="spin"></span>':ic('refresh'))+'</button></div></div></div>';
+    '<div class="row"><button class="ib" data-act="refresh" aria-label="Neu laden">'+(busy?'<span class="spin"></span>':ic('refresh'))+'</button></div></div></div>';
   if(lastErr)h+='<div class="err">'+esc(lastErr)+'</div>';
+  h+='<div class="seg"><button data-act="setview" data-k="list" aria-pressed="'+(set.view!=='map')+'">'+ic('list')+' Liste</button><button data-act="setview" data-k="map" aria-pressed="'+(set.view==='map')+'">'+ic('map')+' Karte</button></div>';
   if(!near){
     h+=avgBox(null);
     h+=busy?'<div class="empty"><span class="spin"></span>Preise werden geladen …</div>':
@@ -466,7 +468,7 @@ function viewNear(){
   var cheap=l.filter(function(s){return s.isOpen&&n(s[f]);}).sort(function(a,b){return a[f]-b[f]||a.dist-b.dist;})[0];
   if(cheap)h+='<div class="best" data-act="station" data-id="'+esc(cheap.id)+'"><div class="bp">'+pr(cheap[f])+'</div><div class="tx"><span class="kl">Am günstigsten</span><b>'+esc(title(cheap))+'</b><small>'+esc(addr(cheap))+' · '+km(cheap.dist)+'</small></div></div>';
   h+=avgBox(cheap?cheap[f]:null);
-  if(set.view==='map'){h+='<div id="map"></div>';}
+  if(set.view==='map'){h+='<div id="map"></div><button class="btn wide" data-act="gmapsall">'+ic('map')+'Tankstellen in Google Maps öffnen</button>';}
   else if(!l.length)h+='<div class="empty">Keine Tankstelle im Umkreis von '+set.rad+' km. Nimm einen größeren Umkreis.</div>';
   else h+='<div class="sl">'+l.map(function(s){return stRow(s,r);}).join('')+'</div>';
   h+='<p class="src">Preise: <a href="#" data-act="ext" data-u="https://www.tankerkoenig.de">Tankerkönig</a> (MTS-K), CC BY 4.0 · Ø Deutschland: <a href="#" data-act="ext" data-u="https://www.benzinpreis-aktuell.de">benzinpreis-aktuell.de</a>'+(set.view==='map'?' · Karte © OpenStreetMap, © CARTO':'')+'</p>';
@@ -524,6 +526,7 @@ async function stationSheet(id){
     else if(!d)h+='<div class="srow"><small><span class="spin"></span> Öffnungszeiten werden geladen …</small></div>';
     h+='<div class="row"><button class="btn pri" style="flex:1" data-act="navi" data-id="'+esc(id)+'">'+ic('nav')+'Route</button>'+
       '<button class="btn" style="flex:1" data-act="fav" data-id="'+esc(id)+'">'+ic('star')+(isFav(id)?'Favorit ✓':'Favorit')+'</button></div>'+
+      '<button class="btn wide" data-act="gmaps" data-id="'+esc(id)+'">'+ic('map')+'In Google Maps zeigen</button>'+
       '<button class="btn wide" data-act="tanked" data-id="'+esc(id)+'">'+ic('book')+'Hier getankt – ins Tankbuch</button>';
     return h;
   }
@@ -858,6 +861,9 @@ document.addEventListener('click',async function(e){
     case 'rad':set.rad=+k;saveSet();loadNear(false);break;
     case 'sort':set.sort=k;saveSet();render();break;
     case 'view':set.view=set.view==='map'?'list':'map';saveSet();render();break;
+    case 'setview':set.view=k;saveSet();render();break;
+    case 'gmaps':{var g=findSt(id);if(g)openExt('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(title(g)+' '+addr(g)));break;}
+    case 'gmapsall':if(pos)openExt('https://www.google.com/maps/search/tankstelle/@'+pos.lat.toFixed(5)+','+pos.lng.toFixed(5)+',14z');break;
     case 'refresh':loadNear(true);break;
     case 'locate':{toast('Suche deinen Standort …',2500);busy=true;render();try{await usePos(true);busy=false;near=null;loadNear(false);}catch(x){busy=false;var m=errText(x);lastErr=/permission/i.test(m)?'Fox Tank darf deinen Standort nicht sehen. Erlaube ihn in den Android-Einstellungen oder such einen Ort aus.':m;render();}break;}
     case 'placesearch':placeSheet('near');break;
