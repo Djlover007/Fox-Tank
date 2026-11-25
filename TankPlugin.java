@@ -15,6 +15,15 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.content.ContentResolver;
+import android.content.ContentValues;
+import android.net.Uri;
+import android.provider.MediaStore;
+import android.util.Base64;
+import androidx.core.content.FileProvider;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
@@ -356,5 +365,96 @@ public class TankPlugin extends Plugin {
         r.put("lastHitMsg", sp.getString("lastHitMsg", ""));
         r.put("allowed", canNotify(getContext()));
         call.resolve(r);
+    }
+
+    // ---------- Dateien (Sicherung, PDF, CSV) ----------
+    private static String safeName(String n) {
+        String s = n == null ? "FoxTank.dat" : n.replaceAll("[\\\\/:*?\"<>|]", "_");
+        return s.isEmpty() ? "FoxTank.dat" : s;
+    }
+
+    @PluginMethod
+    public void saveFile(final PluginCall call) {
+        final String name = safeName(call.getString("name"));
+        final String mime = call.getString("mime", "application/octet-stream");
+        final String data = call.getString("data", "");
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    byte[] bytes = Base64.decode(data, Base64.DEFAULT);
+                    String where;
+                    if (Build.VERSION.SDK_INT >= 29) {
+                        ContentResolver cr = getContext().getContentResolver();
+                        ContentValues v = new ContentValues();
+                        v.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+                        v.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+                        v.put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/Fox Tank");
+                        v.put(MediaStore.MediaColumns.IS_PENDING, 1);
+                        Uri uri = cr.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                        if (uri == null) {
+                            throw new Exception("Datei konnte nicht angelegt werden");
+                        }
+                        OutputStream os = cr.openOutputStream(uri);
+                        if (os == null) {
+                            throw new Exception("Datei konnte nicht geschrieben werden");
+                        }
+                        os.write(bytes);
+                        os.close();
+                        v.clear();
+                        v.put(MediaStore.MediaColumns.IS_PENDING, 0);
+                        cr.update(uri, v, null, null);
+                        where = "Download/Fox Tank";
+                    } else {
+                        File dir = getContext().getExternalFilesDir(null);
+                        if (dir == null) {
+                            dir = getContext().getFilesDir();
+                        }
+                        File f = new File(dir, name);
+                        FileOutputStream fo = new FileOutputStream(f);
+                        fo.write(bytes);
+                        fo.close();
+                        where = f.getAbsolutePath();
+                    }
+                    JSObject r = new JSObject();
+                    r.put("where", where);
+                    call.resolve(r);
+                } catch (Exception e) {
+                    call.reject(String.valueOf(e.getMessage()));
+                }
+            }
+        }).start();
+    }
+
+    @PluginMethod
+    public void shareFile(final PluginCall call) {
+        final String name = safeName(call.getString("name"));
+        final String mime = call.getString("mime", "application/octet-stream");
+        final String data = call.getString("data", "");
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    File dir = new File(getContext().getCacheDir(), "share");
+                    dir.mkdirs();
+                    File f = new File(dir, name);
+                    FileOutputStream fo = new FileOutputStream(f);
+                    fo.write(Base64.decode(data, Base64.DEFAULT));
+                    fo.close();
+                    Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f);
+                    Intent send = new Intent(Intent.ACTION_SEND);
+                    send.setType(mime);
+                    send.putExtra(Intent.EXTRA_STREAM, uri);
+                    send.putExtra(Intent.EXTRA_SUBJECT, name);
+                    send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    Intent ch = Intent.createChooser(send, "Teilen");
+                    ch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    getContext().startActivity(ch);
+                    call.resolve();
+                } catch (Exception e) {
+                    call.reject(String.valueOf(e.getMessage()));
+                }
+            }
+        }).start();
     }
 }

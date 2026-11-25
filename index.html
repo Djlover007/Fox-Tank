@@ -241,6 +241,13 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .avg .d{font-size:12.5px;font-weight:700;border-radius:999px;padding:3px 8px;white-space:nowrap}
 .avg .d.lo{background:var(--good-soft);color:var(--good)}
 .avg .d.hi{background:var(--bad-soft);color:var(--bad)}
+.tags{display:flex;gap:6px;margin-top:3px}
+.tag{display:inline-flex;align-items:center;gap:3px;font-size:11.5px;font-weight:700;border-radius:999px;padding:2px 8px;background:var(--surface2);color:var(--muted)}
+.tag .i{width:12px;height:12px}
+.tag.biz{background:var(--accent-soft);color:var(--accent)}
+.ph{display:flex;flex-direction:column;gap:8px}
+.ph img{max-width:100%;max-height:260px;object-fit:contain;border-radius:12px;background:var(--surface2);align-self:flex-start}
+.btn .i{flex:none}
 .fab{position:sticky;bottom:6px;align-self:center;box-shadow:0 8px 22px var(--shadow)}
 </style>
 </head>
@@ -264,6 +271,9 @@ input[type=range]{width:100%;accent-color:var(--accent)}
     <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
     <symbol id="i-nav" viewBox="0 0 24 24"><path d="M3 11 21 3l-8 18-2-8z"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 3v12M7 8l5-5 5 5M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21 11-8.6 8.6a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
   </defs>
 </svg>
@@ -650,21 +660,69 @@ function months(){
   book.forEach(function(x){var k=String(x.d).slice(0,7);out.forEach(function(m){if(m.k===k)m.v+=x.t||0;});});
   return out;
 }
+/* ---------- Beleg-Fotos (IndexedDB, damit der Speicher reicht) ---------- */
+var DBP=null;
+function db(){
+  if(DBP)return DBP;
+  DBP=new Promise(function(ok,no){
+    try{var r=indexedDB.open('foxtank',1);
+      r.onupgradeneeded=function(){r.result.createObjectStore('photos');};
+      r.onsuccess=function(){ok(r.result);};r.onerror=function(){no(r.error);};}
+    catch(e){no(e);}
+  });
+  return DBP;
+}
+function dbDo(mode,fn){return db().then(function(d){return new Promise(function(ok,no){
+  var t=d.transaction('photos',mode),st=t.objectStore('photos'),res;
+  var rq=fn(st);if(rq)rq.onsuccess=function(){res=rq.result;};
+  t.oncomplete=function(){ok(res);};t.onerror=function(){no(t.error);};t.onabort=function(){no(t.error||new Error('Speicher voll?'));};
+});});}
+function photoGet(id){return dbDo('readonly',function(s){return s.get(id);}).catch(function(){return null;});}
+function photoPut(id,data){return dbDo('readwrite',function(s){return s.put(data,id);});}
+function photoDel(id){return dbDo('readwrite',function(s){return s.delete(id);}).catch(function(){});}
+function photoAll(){return dbDo('readonly',function(s){return s.getAllKeys();}).then(function(keys){
+  return Promise.all((keys||[]).map(function(k){return photoGet(k).then(function(v){return [k,v];});}));
+}).then(function(l){var o={};l.forEach(function(p){if(p[1])o[p[0]]=p[1];});return o;}).catch(function(){return {};});}
+/* Foto verkleinern: lange Seite max. 1600 px, JPEG */
+function shrink(file){return new Promise(function(ok,no){
+  var fr=new FileReader();fr.onerror=function(){no(new Error('Foto nicht lesbar'));};
+  fr.onload=function(){var im=new Image();im.onerror=function(){no(new Error('Foto nicht lesbar'));};
+    im.onload=function(){var m=1600,w=im.naturalWidth,h=im.naturalHeight,f=Math.min(1,m/Math.max(w,h));
+      var c=document.createElement('canvas');c.width=Math.round(w*f);c.height=Math.round(h*f);
+      var g=c.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,c.width,c.height);g.drawImage(im,0,0,c.width,c.height);
+      ok(c.toDataURL('image/jpeg',0.75));};
+    im.src=fr.result;};
+  fr.readAsDataURL(file);
+});}
+
+function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
+(function(){var ch=false;book.forEach(function(x){if(!x.id){x.id=uid();ch=true;}});if(ch)save('ft-book',book);})();
+var bookFilter='all';
+function bizSum(year){return book.filter(function(x){return x.biz&&String(x.d).slice(0,4)===String(year);}).reduce(function(s,x){return s+(x.t||0);},0);}
+function lastBackup(){return Number(load('ft-backup',0))||0;}
+
 function viewBook(){
-  var h='<div class="row" style="justify-content:space-between"><h2>Tankbuch</h2><button class="btn sm pri" data-act="newentry">'+ic('plus')+'Eintragen</button></div>';
-  if(!book.length)return h+'<div class="empty"><svg class="i"><use href="#i-book"/></svg><b>Noch nichts eingetragen</b>Trag nach dem Tanken Liter, Preis und Kilometerstand ein. Fox Tank rechnet dir Verbrauch und Kosten aus.<button class="btn pri" data-act="newentry">'+ic('plus')+'Erste Tankfüllung</button></div>';
-  var s=stats(),m=months(),mx=Math.max.apply(null,m.map(function(x){return x.v;}))||1,cur=m[m.length-1];
+  var h='<div class="row" style="justify-content:space-between"><h2>Tankbuch</h2><div class="row"><button class="ib" data-act="exportsheet" aria-label="Export und Sicherung">'+ic('share')+'</button><button class="btn sm pri" data-act="newentry">'+ic('plus')+'Eintragen</button></div></div>';
+  if(!book.length)return h+'<div class="empty"><svg class="i"><use href="#i-book"/></svg><b>Noch nichts eingetragen</b>Trag nach dem Tanken Liter, Preis und Kilometerstand ein. Fox Tank rechnet dir Verbrauch und Kosten aus.<button class="btn pri" data-act="newentry">'+ic('plus')+'Erste Tankfüllung</button><button class="btn" data-act="importbackup">Sicherung einlesen</button></div>';
+  var lb=lastBackup();
+  if(Date.now()-lb>30*86400e3)h+='<div class="demo"><div><b>'+(lb?'Letzte Sicherung '+ago(lb)+'.':'Noch keine Sicherung.')+'</b> Sichere dein Tankbuch, damit nichts verloren geht.</div><button class="btn sm pri" data-act="exportsheet">Sichern</button></div>';
+  var s=stats(),m=months(),mx=Math.max.apply(null,m.map(function(x){return x.v;}))||1,cur=m[m.length-1],yr=new Date().getFullYear(),bz=bizSum(yr);
   h+='<div class="stat">'+
     '<div><small>Ø Verbrauch</small><b>'+(s.cons?num(s.cons,1):'–')+'<i>l/100 km</i></b></div>'+
     '<div><small>Diesen Monat</small><b>'+eur(cur.v)+'</b></div>'+
     '<div><small>Ø Literpreis</small><b>'+(s.avgP?num(s.avgP,3):'–')+'<i>€</i></b></div>'+
-    '<div><small>Gesamt ('+s.n+'×)</small><b>'+eur(s.tot,0)+'</b></div></div>';
+    '<div><small>Gesamt ('+s.n+'×)</small><b>'+eur(s.tot,0)+'</b></div>'+
+    (bz?'<div style="grid-column:1/-1" data-act="exportsheet"><small>Geschäftlich '+yr+' · für den Steuerberater</small><b>'+eur(bz)+'</b></div>':'')+'</div>';
   if(!s.cons)h+='<p class="hint">Für den Verbrauch: zweimal voll tanken und jeweils den Kilometerstand eintragen.</p>';
   h+='<div class="box"><p class="lbl" style="margin:0">Kosten pro Monat</p><div class="bars">'+m.map(function(x,i){return '<div class="bc'+(i===m.length-1?' now':'')+'"><span class="bv">'+(x.v?Math.round(x.v)+' €':'')+'</span><div class="b" style="height:'+Math.round(x.v/mx*90)+'%"></div><span class="bl">'+esc(x.lab)+'</span></div>';}).join('')+'</div></div>';
-  h+='<div class="sl">'+book.map(function(x,i){
-    var d=new Date(x.d+'T12:00:00');
-    return '<div class="en" data-act="editentry" data-i="'+i+'"><div class="dt"><b>'+d.getDate()+'</b><small>'+d.toLocaleDateString('de-DE',{month:'short'}).replace('.','')+'</small></div>'+
-      '<div class="tx"><b>'+num(x.l,2)+' l '+(x.f?FUEL[x.f]:'')+(x.full?' · voll':'')+'</b><small>'+(x.p?num(x.p,3)+' €/l':'')+(x.km?' · '+x.km.toLocaleString('de-DE')+' km':'')+(x.st?' · '+esc(x.st):'')+'</small></div>'+
+  h+='<div class="chips">'+chip('bfilter','all','Alle',bookFilter==='all')+chip('bfilter','biz','Geschäftlich',bookFilter==='biz')+chip('bfilter','priv','Privat',bookFilter==='priv')+'</div>';
+  var list=book.map(function(x,i){return [x,i];}).filter(function(p){return bookFilter==='all'||(bookFilter==='biz'?p[0].biz:!p[0].biz);});
+  if(!list.length)h+='<div class="empty">Keine Einträge in dieser Auswahl.</div>';
+  h+='<div class="sl">'+list.map(function(p){
+    var x=p[0],i=p[1],d=new Date(x.d+'T12:00:00');
+    return '<div class="en" data-act="editentry" data-i="'+i+'"><div class="dt"><b>'+d.getDate()+'</b><small>'+d.toLocaleDateString('de-DE',{month:'short'}).replace('.','')+(d.getFullYear()!==yr?' '+String(d.getFullYear()).slice(2):'')+'</small></div>'+
+      '<div class="tx"><b>'+num(x.l,2)+' l '+(x.f?FUEL[x.f]:'')+(x.full?' · voll':'')+'</b><small>'+(x.p?num(x.p,3)+' €/l':'')+(x.km?' · '+x.km.toLocaleString('de-DE')+' km':'')+(x.st?' · '+esc(x.st):'')+'</small>'+
+      ((x.biz||x.ph)?'<span class="tags">'+(x.biz?'<span class="tag biz">Geschäftlich</span>':'')+(x.ph?'<span class="tag">'+ic('clip')+'Beleg</span>':'')+'</span>':'')+'</div>'+
       '<div class="sum">'+eur(x.t)+'</div></div>';
   }).join('')+'</div>';
   return h;
@@ -672,9 +730,15 @@ function viewBook(){
 function todayStr(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function pnum(v){v=String(v||'').trim().replace(/\s/g,'');if(v.indexOf(',')>=0)v=v.replace(/\./g,'').replace(',','.');var x=parseFloat(v);return isFinite(x)?x:0;}
 function fnum(v,d){return v?String(Number(v).toFixed(d)).replace('.',','):'';}
-var editI=-1;
+var editI=-1,editPhoto=null,editPhotoChanged=false;
+function photoBox(){
+  var b=$('#ePh');if(!b)return;
+  b.innerHTML=editPhoto?'<img src="'+editPhoto+'" alt="Beleg" data-act="photoview"><div class="row"><button class="btn sm" data-act="photopick" data-k="cam">'+ic('camera')+'Neu</button><button class="btn sm" data-act="photodel" style="color:var(--bad)">'+ic('trash')+'Entfernen</button></div>':
+    '<div class="row"><button class="btn sm" data-act="photopick" data-k="cam">'+ic('camera')+'Foto machen</button><button class="btn sm" data-act="photopick" data-k="gal">'+ic('clip')+'Aus Galerie</button></div>';
+}
 function entrySheet(i,pre){
-  editI=i;var x=i>=0?book[i]:Object.assign({d:todayStr(),l:0,p:0,t:0,km:0,full:true,f:set.fuel,st:''},pre||{});
+  editI=i;var x=i>=0?book[i]:Object.assign({d:todayStr(),l:0,p:0,t:0,km:0,full:true,f:set.fuel,st:'',biz:!!load('ft-lastbiz',false)},pre||{});
+  editPhoto=null;editPhotoChanged=false;
   var lastKm=book.reduce(function(m,y){return Math.max(m,y.km||0);},0);
   openSheet('<h3>'+(i>=0?'Tankfüllung ändern':'Tankfüllung eintragen')+'</h3>'+
     '<div class="seg" id="eF">'+FUELS.map(function(k){return '<button data-act="efuel" data-k="'+k+'" aria-pressed="'+(x.f===k)+'">'+FUEL[k]+'</button>';}).join('')+'</div>'+
@@ -686,24 +750,176 @@ function entrySheet(i,pre){
     '<label class="full">Kilometerstand<input id="eK" inputmode="numeric" value="'+(x.km||'')+'" placeholder="'+(lastKm?'zuletzt '+lastKm.toLocaleString('de-DE'):'z. B. 123456')+'"></label>'+
     '<label class="full">Tankstelle<input id="eS" value="'+esc(x.st)+'" placeholder="optional"></label></div>'+
     '<div class="srow line"><div><b>Voll getankt</b><br><small>Nur dann kann der Verbrauch genau berechnet werden</small></div><input type="checkbox" class="sw" id="eFull"'+(x.full?' checked':'')+' aria-label="Voll getankt"></div>'+
+    '<div class="srow line"><div><b>Geschäftlich</b><br><small>Für dein Kleinunternehmen, kommt in den Export für den Steuerberater</small></div><input type="checkbox" class="sw" id="eBiz"'+(x.biz?' checked':'')+' aria-label="Geschäftlich"></div>'+
+    '<div class="srow"><b>Beleg (Quittung)</b><div class="ph" id="ePh"></div></div>'+
+    '<label class="full" style="display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:700;color:var(--muted)">Notiz<input id="eN" value="'+esc(x.note||'')+'" placeholder="z. B. Fahrt zum Kunden" style="border:0;border-radius:12px;background:var(--surface2);padding:12px 14px;color:var(--fg);font-size:16px"></label>'+
     '<button class="btn pri wide" data-act="saveentry">Speichern</button>'+
     (i>=0?'<button class="btn wide" data-act="delentry" style="color:var(--bad)">'+ic('trash')+'Löschen</button>':'<button class="btn wide" data-act="close">Abbrechen</button>'));
   $('#sheet').dataset.ef=x.f;
-  var L1=$('#eL'),P1=$('#eP'),T1=$('#eT'),lastEdit='';
+  photoBox();
+  if(i>=0&&x.ph)photoGet(x.id).then(function(p){if(p&&editI===i){editPhoto=p;photoBox();}});
+  var L1=$('#eL'),P1=$('#eP'),T1=$('#eT');
   function calc(src){var l=pnum(L1.value),p=pnum(P1.value),t=pnum(T1.value);
     if(src!=='t'&&l&&p)T1.value=fnum(l*p,2);
     else if(src==='t'&&t&&p&&!l)L1.value=fnum(t/p,2);
     else if(src==='t'&&t&&l)P1.value=fnum(t/l,3);}
   L1.addEventListener('input',function(){calc('l');});P1.addEventListener('input',function(){calc('p');});T1.addEventListener('input',function(){calc('t');});
 }
-function saveEntry(){
-  var x={d:$('#eD').value||todayStr(),l:pnum($('#eL').value),p:pnum($('#eP').value),t:pnum($('#eT').value),km:Math.round(pnum($('#eK').value)),full:$('#eFull').checked,f:$('#sheet').dataset.ef||set.fuel,st:$('#eS').value.trim()};
+function pickFile(accept,capture){return new Promise(function(ok){
+  var inp=document.createElement('input');inp.type='file';inp.accept=accept;if(capture)inp.setAttribute('capture','environment');
+  inp.style.display='none';document.body.appendChild(inp);
+  inp.addEventListener('change',function(){var f=inp.files&&inp.files[0];inp.remove();ok(f||null);});
+  inp.click();
+});}
+async function pickPhoto(cam){
+  var f=await pickFile('image/*',cam);if(!f)return;
+  try{editPhoto=await shrink(f);editPhotoChanged=true;photoBox();}catch(e){toast(errText(e));}
+}
+async function saveEntry(){
+  var old=editI>=0?book[editI]:null;
+  var x={id:old?old.id:uid(),d:$('#eD').value||todayStr(),l:pnum($('#eL').value),p:pnum($('#eP').value),t:pnum($('#eT').value),km:Math.round(pnum($('#eK').value)),full:$('#eFull').checked,f:$('#sheet').dataset.ef||set.fuel,st:$('#eS').value.trim(),biz:$('#eBiz').checked,note:$('#eN').value.trim(),ph:!!(editPhoto)};
   if(!x.l&&x.t&&x.p)x.l=Math.round(x.t/x.p*100)/100;
   if(!x.t&&x.l&&x.p)x.t=Math.round(x.l*x.p*100)/100;
   if(!x.p&&x.l&&x.t)x.p=Math.round(x.t/x.l*1000)/1000;
   if(!x.l||!x.t){toast('Bitte mindestens Liter und Preis (oder Betrag) eintragen.');return;}
-  if(editI>=0)book[editI]=x;else book.push(x);
-  saveBook();closeSheet();toast(editI>=0?'Geändert.':'Eingetragen ✓');if(tab!=='book')go('book');else render();
+  if(editPhotoChanged){
+    try{if(editPhoto)await photoPut(x.id,editPhoto);else await photoDel(x.id);}
+    catch(e){toast('Beleg konnte nicht gespeichert werden: '+errText(e),5000);x.ph=old?!!old.ph:false;}
+  }
+  if(!old)save('ft-lastbiz',x.biz);
+  if(old)book[editI]=x;else book.push(x);
+  saveBook();closeSheet();toast(old?'Geändert.':'Eingetragen ✓');if(tab!=='book')go('book');else render();
+}
+
+/* ---------- Dateien speichern / teilen ---------- */
+function b64utf8(s){return btoa(unescape(encodeURIComponent(s)));}
+async function deliver(name,mime,b64,how){
+  if(T){
+    if(how==='share'){await T.shareFile({name:name,mime:mime,data:b64});return 'share';}
+    var r=await T.saveFile({name:name,mime:mime,data:b64});return r&&r.where||'Download/Fox Tank';
+  }
+  var a=document.createElement('a');a.href='data:'+mime+';base64,'+b64;a.download=name;document.body.appendChild(a);a.click();a.remove();return 'Downloads';
+}
+function stamp(){return todayStr();}
+
+/* Sicherung: alles außer dem API-Schlüssel */
+async function makeBackup(){
+  var s=Object.assign({},set);delete s.key;
+  return JSON.stringify({app:'Fox Tank',v:1,at:new Date().toISOString(),set:s,favs:favs,alarm:alarm,book:book,photos:await photoAll()});
+}
+async function doBackup(how){
+  try{
+    toast('Sicherung wird erstellt …',2000);
+    var where=await deliver('FoxTank-Sicherung-'+stamp()+'.json','application/json',b64utf8(await makeBackup()),how);
+    save('ft-backup',Date.now());
+    if(where!=='share')toast('Gespeichert in '+where+' ✓',5000);
+    if(tab==='book')render();
+    if($('#sheet').classList.contains('open'))exportSheet();
+  }catch(e){toast('Sicherung fehlgeschlagen: '+errText(e),6000);}
+}
+async function importBackup(){
+  var f=await pickFile('application/json,.json,text/plain',false);if(!f)return;
+  try{
+    var j=JSON.parse(await f.text());
+    if(!j||j.app!=='Fox Tank'||!Array.isArray(j.book))throw new Error('Das ist keine Fox-Tank-Sicherung.');
+    var have={},added=0;book.forEach(function(x){have[x.id]=1;});
+    j.book.forEach(function(x){if(!x.id)x.id=uid();if(!have[x.id]){book.push(x);have[x.id]=1;added++;}});
+    var ph=j.photos||{},np=0;
+    for(var k in ph){if(Object.prototype.hasOwnProperty.call(ph,k)){try{await photoPut(k,ph[k]);np++;}catch(e){}}}
+    (j.favs||[]).forEach(function(fv){if(favs.length<10&&!isFav(fv.id))favs.push(fv);});
+    if(j.alarm&&!alarm.limit)alarm=Object.assign(alarm,j.alarm,{on:false});
+    if(j.set){['fuel','rad','sort','view'].forEach(function(k2){if(j.set[k2]!=null)set[k2]=j.set[k2];});}
+    saveBook();saveFavs();saveAlarm();saveSet();closeSheet();
+    toast('Eingelesen: '+added+' neue Einträge'+(np?', '+np+' Belege':'')+' ✓',6000);
+    go('book');
+  }catch(e){toast('Einlesen fehlgeschlagen: '+errText(e),6000);}
+}
+
+/* ---------- Export für den Steuerberater ---------- */
+var exp={year:new Date().getFullYear(),which:'biz'};
+function years(){var y={};book.forEach(function(x){y[String(x.d).slice(0,4)]=1;});y[new Date().getFullYear()]=1;return Object.keys(y).sort().reverse();}
+function expRows(){
+  return book.filter(function(x){return String(x.d).slice(0,4)===String(exp.year)&&(exp.which==='all'||x.biz);})
+    .slice().sort(function(a,b){return a.d<b.d?-1:a.d>b.d?1:(a.km||0)-(b.km||0);});
+}
+function exportSheet(){
+  var r=expRows(),sum=r.reduce(function(s,x){return s+(x.t||0);},0),lit=r.reduce(function(s,x){return s+(x.l||0);},0),phs=r.filter(function(x){return x.ph;}).length,lb=lastBackup();
+  openSheet('<h3>Export &amp; Sicherung</h3>'+
+    '<div class="srow"><b>Für den Steuerberater</b>'+
+      '<div class="chips">'+years().map(function(y){return chip('expyear',y,y,String(exp.year)===String(y));}).join('')+'</div>'+
+      '<div class="seg"><button data-act="expwhich" data-k="biz" aria-pressed="'+(exp.which==='biz')+'">Nur geschäftlich</button><button data-act="expwhich" data-k="all" aria-pressed="'+(exp.which==='all')+'">Alle</button></div>'+
+      '<small>'+r.length+' Tankfüllung'+(r.length===1?'':'en')+' · '+num(lit,2)+' l · <b style="color:var(--fg)">'+eur(sum)+'</b>'+(r.length?' · '+phs+' mit Beleg':'')+'</small>'+
+      (r.length?'<div class="row"><button class="btn sm pri" data-act="pdf" data-k="share">'+ic('share')+'PDF teilen</button><button class="btn sm" data-act="pdf" data-k="save">PDF speichern</button><button class="btn sm" data-act="csv">Excel (CSV)</button></div>':'<small>Für diese Auswahl gibt es keine Einträge. Markiere Tankfüllungen beim Eintragen als „Geschäftlich“.</small>')+
+      '<small>Das PDF enthält eine Liste mit Summe und danach alle Beleg-Fotos.</small></div>'+
+    '<div class="srow"><b>Sicherung</b><small>'+(lb?'Letzte Sicherung: '+ago(lb):'Noch keine Sicherung gemacht.')+' Enthält Tankbuch, Belege, Favoriten und Einstellungen (ohne deinen Schlüssel).</small>'+
+      '<div class="row"><button class="btn sm pri" data-act="backup" data-k="save">Speichern</button><button class="btn sm" data-act="backup" data-k="share">'+ic('share')+'Teilen</button><button class="btn sm" data-act="importbackup">Einlesen</button></div>'+
+      '<small>Tipp: Mit „Teilen“ kannst du die Sicherung z. B. an dich selbst mailen oder in Google Drive ablegen. Beim Einlesen kommen nur neue Einträge dazu, nichts wird doppelt.</small></div>');
+}
+function csvCell(v){v=String(v==null?'':v);return /[;"\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}
+async function doCsv(){
+  var r=expRows(),dec=function(v,d){return v?Number(v).toFixed(d).replace('.',','):'';};
+  var lines=[['Datum','Art','Tankstelle','Sorte','Liter','Preis pro Liter (EUR)','Betrag (EUR)','Kilometerstand','Voll getankt','Notiz','Beleg-Foto'].join(';')];
+  r.forEach(function(x){var d=x.d.split('-');lines.push([d[2]+'.'+d[1]+'.'+d[0],x.biz?'geschäftlich':'privat',x.st,FUEL[x.f]||'',dec(x.l,2),dec(x.p,3),dec(x.t,2),x.km||'',x.full?'ja':'nein',x.note||'',x.ph?'ja':'nein'].map(csvCell).join(';'));});
+  var sum=r.reduce(function(s,x){return s+(x.t||0);},0);
+  lines.push(['Summe','','','',dec(r.reduce(function(s,x){return s+(x.l||0);},0),2),'',dec(sum,2),'','','',''].join(';'));
+  try{await deliver('Tankbelege-'+exp.year+(exp.which==='biz'?'-geschaeftlich':'')+'.csv','text/csv',b64utf8('﻿'+lines.join('\r\n')),'share');}
+  catch(e){toast('Export fehlgeschlagen: '+errText(e),6000);}
+}
+var JSP=null;
+function loadJsPdf(){
+  if(window.jspdf)return Promise.resolve();
+  if(JSP)return JSP;
+  JSP=new Promise(function(ok,no){var s=document.createElement('script');s.src='jspdf/jspdf.umd.min.js';s.onload=function(){ok();};s.onerror=function(){JSP=null;no(new Error('PDF-Baustein fehlt'));};document.head.appendChild(s);});
+  return JSP;
+}
+function imgSize(src){return new Promise(function(ok){var i=new Image();i.onload=function(){ok([i.naturalWidth,i.naturalHeight]);};i.onerror=function(){ok([0,0]);};i.src=src;});}
+async function doPdf(how){
+  var r=expRows();if(!r.length)return;
+  toast('PDF wird erstellt …',3000);
+  try{
+    await loadJsPdf();
+    var doc=new jspdf.jsPDF({unit:'mm',format:'a4'}),W=210,M=14,y=18;
+    var title=(exp.which==='biz'?'Tankbelege geschäftlich ':'Tankbelege ')+exp.year;
+    function head(){
+      doc.setFont('helvetica','bold');doc.setFontSize(16);doc.text(title,M,y);
+      doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(110);
+      doc.text('Erstellt am '+new Date().toLocaleDateString('de-DE')+' mit Fox Tank · Beträge brutto in EUR',M,y+6);doc.setTextColor(0);
+      y+=14;
+    }
+    var cols=[['Datum',M,'l'],['Tankstelle',M+21,'l'],['Sorte',M+86,'l'],['Liter',M+122,'r'],['€/l',M+141,'r'],['Betrag',M+163,'r'],['km',W-M,'r']];
+    function thead(){doc.setFont('helvetica','bold');doc.setFontSize(9);cols.forEach(function(c){doc.text(c[0],c[1],y,{align:c[2]==='r'?'right':'left'});});
+      doc.setDrawColor(200);doc.line(M,y+1.8,W-M,y+1.8);y+=6;doc.setFont('helvetica','normal');}
+    head();thead();
+    var n2=function(v,d){return v?Number(v).toLocaleString('de-DE',{minimumFractionDigits:d,maximumFractionDigits:d}):'';};
+    var sum=0,lit=0,nr=0,refs={};
+    r.forEach(function(x){
+      if(y>280){doc.addPage();y=18;thead();}
+      var d=x.d.split('-');nr++;
+      if(x.ph)refs[x.id]=nr;
+      var st=(x.st||'')+(x.note?' – '+x.note:'');if(st.length>36)st=st.slice(0,35)+'…';
+      doc.text(d[2]+'.'+d[1]+'.'+d[0],cols[0][1],y);doc.text(st+(x.ph?' ['+nr+']':''),cols[1][1],y);doc.text(FUEL[x.f]||'',cols[2][1],y);
+      doc.text(n2(x.l,2),cols[3][1],y,{align:'right'});doc.text(n2(x.p,3),cols[4][1],y,{align:'right'});doc.text(n2(x.t,2),cols[5][1],y,{align:'right'});doc.text(x.km?x.km.toLocaleString('de-DE'):'',cols[6][1],y,{align:'right'});
+      sum+=x.t||0;lit+=x.l||0;y+=6;
+    });
+    doc.setDrawColor(120);doc.line(M,y-3.5,W-M,y-3.5);doc.setFont('helvetica','bold');
+    doc.text('Summe ('+r.length+' Tankfüllungen)',M,y+1);doc.text(n2(lit,2),cols[3][1],y+1,{align:'right'});doc.text(n2(sum,2)+' €',cols[5][1],y+1,{align:'right'});
+    doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(110);
+    doc.text('[n] = Beleg-Foto auf den folgenden Seiten',M,y+8);doc.setTextColor(0);
+    for(var i=0;i<r.length;i++){
+      var x=r[i];if(!x.ph)continue;
+      var p=await photoGet(x.id);if(!p)continue;
+      var sz=await imgSize(p);if(!sz[0])continue;
+      doc.addPage();var d2=x.d.split('-');
+      doc.setFont('helvetica','bold');doc.setFontSize(12);
+      doc.text('Beleg ['+refs[x.id]+'] · '+d2[2]+'.'+d2[1]+'.'+d2[0]+' · '+n2(x.t,2)+' €',M,18);
+      doc.setFont('helvetica','normal');doc.setFontSize(9);doc.text((x.st||'')+(x.note?' – '+x.note:''),M,24);
+      var mw=W-2*M,mh=297-34-M,f=Math.min(mw/sz[0],mh/sz[1]);
+      doc.addImage(p,'JPEG',M,30,sz[0]*f,sz[1]*f);
+    }
+    var b64=doc.output('datauristring').split(',')[1];
+    var where=await deliver('Tankbelege-'+exp.year+(exp.which==='biz'?'-geschaeftlich':'')+'.pdf','application/pdf',b64,how);
+    if(where!=='share')toast('Gespeichert in '+where+' ✓',5000);
+  }catch(e){toast('PDF fehlgeschlagen: '+errText(e),6000);}
 }
 
 /* ================= Ort suchen ================= */
@@ -794,6 +1010,7 @@ async function settingsSheet(){
     (isNative()?'<button class="srow" style="border:0;text-align:left" data-act="upd"><b>App-Update</b><small>'+(appVer?'Version '+appVer.code+' · ':'')+'Tippen zum Prüfen'+(upd?' · Neu: '+upd.ver:'')+'</small></button>'+
     '<div class="srow line"><div><b>Updates automatisch suchen</b><br><small>Die Installation bestätigst du selbst</small></div><input type="checkbox" class="sw" id="autoUpd"'+(set.autoUpd?' checked':'')+' aria-label="Updates automatisch suchen"></div>':'')+
     '<div class="srow"><b>Woher kommen die Preise?</b><small>Alle Tankstellen in Deutschland müssen ihre Preise an die Markttransparenzstelle für Kraftstoffe (MTS-K) melden. Fox Tank holt sie über Tankerkönig (Lizenz CC BY 4.0). Den Deutschland-Durchschnitt liefert benzinpreis-aktuell.de, dafür braucht es keinen Schlüssel. Die Preise können sich jederzeit ändern, an der Säule gilt der Preis dort.</small></div>'+
+    '<button class="srow" style="border:0;text-align:left" data-act="exportsheet"><b>Export &amp; Sicherung</b><small>Tankbuch sichern oder einlesen, PDF für den Steuerberater'+(lastBackup()?' · zuletzt gesichert '+ago(lastBackup()):'')+'</small></button>'+
     '<div class="srow line"><div><b>Tankbuch löschen</b><br><small>'+book.length+' Einträge</small></div><button class="btn sm" data-act="clearbook">Löschen</button></div>'+
     '<p class="hint" style="text-align:center">Fox Tank · Design by <b style="color:var(--accent)">Mr.Fox</b></p>');
   var el=$('#autoUpd');if(el)el.addEventListener('change',function(e){set.autoUpd=e.target.checked;saveSet();});
@@ -885,8 +1102,19 @@ document.addEventListener('click',async function(e){
     case 'editentry':entrySheet(+b.dataset.i);break;
     case 'efuel':$('#sheet').dataset.ef=k;Array.prototype.forEach.call(document.querySelectorAll('#sheet [data-act="efuel"]'),function(x){x.setAttribute('aria-pressed',x.dataset.k===k);});break;
     case 'saveentry':saveEntry();break;
-    case 'delentry':if(editI>=0){book.splice(editI,1);saveBook();closeSheet();toast('Gelöscht.');render();}break;
-    case 'clearbook':if(b.dataset.sure){book=[];saveBook();closeSheet();render();toast('Tankbuch gelöscht.');}else{b.dataset.sure='1';b.textContent='Wirklich?';b.style.color='var(--bad)';}break;
+    case 'exportsheet':exportSheet();break;
+    case 'bfilter':bookFilter=k;render();break;
+    case 'photopick':pickPhoto(k==='cam');break;
+    case 'photodel':editPhoto=null;editPhotoChanged=true;photoBox();break;
+    case 'photoview':if(editPhoto){var w=window.open();if(w)w.document.write('<img src="'+editPhoto+'" style="max-width:100%">');}break;
+    case 'expyear':exp.year=+k;exportSheet();break;
+    case 'expwhich':exp.which=k;exportSheet();break;
+    case 'pdf':doPdf(k);break;
+    case 'csv':doCsv();break;
+    case 'backup':doBackup(k);break;
+    case 'importbackup':importBackup();break;
+    case 'delentry':if(editI>=0){if(book[editI].ph)photoDel(book[editI].id);book.splice(editI,1);saveBook();closeSheet();toast('Gelöscht.');render();}break;
+    case 'clearbook':if(b.dataset.sure){book=[];saveBook();dbDo('readwrite',function(st){return st.clear();}).catch(function(){});closeSheet();render();toast('Tankbuch gelöscht.');}else{b.dataset.sure='1';b.textContent='Wirklich?';b.style.color='var(--bad)';}break;
     case 'upd':checkUpdate(true);break;
     case 'updgo':doUpdate();break;
   }

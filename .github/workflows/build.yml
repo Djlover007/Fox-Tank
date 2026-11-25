@@ -28,7 +28,9 @@ jobs:
           sed -i "s#__REPO__#${{ github.repository }}#" www/index.html
       - run: npm install
       - name: Karte (Leaflet) einbauen
-        run: cp -r node_modules/leaflet/dist/. www/leaflet/
+        run: |
+          cp -r node_modules/leaflet/dist/. www/leaflet/
+          mkdir -p www/jspdf && cp node_modules/jspdf/dist/jspdf.umd.min.js www/jspdf/
       - run: npx cap add android
       - name: Fuchs-Icon erzeugen
         run: |
